@@ -128,6 +128,17 @@ and sound; the rules stay identical.
   `--press FRAME ACTION` scripts key presses
   (`HX_SAVE_DIR=/tmp/x` keeps the real save files clean)
 
+## How this was made
+
+HEXAHEDRON is an independent, clean-room-style reimplementation:
+
+* No source code of Hexaxis XXI was available or used, and its program code was never
+  disassembled or decompiled.
+* The game rules were derived from the original's observable behavior: its in-game help
+  text, screenshots and public descriptions of the game.
+* All code, graphics, music, sounds and texts were written from scratch for this project
+  (help texts and theme names in its own words).
+
 ## Credits / licenses
 
 * Code: MIT license, see `LICENSE`. Copyright (c) 2026 Xma1.
