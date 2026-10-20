@@ -1,0 +1,139 @@
+# HEXAHEDRON
+
+A 3D dice-rolling puzzle game: dice fall into a well, **roll** one face with every
+move, and clear in groups of matching numbers. Modern graphics at any resolution,
+procedural music and sound, written in portable C++ so it can run on PC, Android and PS3.
+
+<sub>Inspired by **Hexaxis XXI** (PSP homebrew, 2007) by Tim Hackett / Darksoft.
+This is an independent fan project with its own code, graphics, sounds and texts;
+nothing from the original game is included. It is not affiliated with or endorsed by the original author.</sub>
+
+Made by Xma1, 2026, developed with the help of AI (Claude by Anthropic).
+
+## Playing
+
+```
+cmake -S . -B build -G Ninja && cmake --build build
+./build/hexahedron
+```
+
+| Action | Keyboard / mouse | Gamepad |
+|---|---|---|
+| Roll the die left / right | ← → / A D | D-pad / left stick |
+| Roll down faster | ↓ / S | D-pad ↓ |
+| Drop | ↑ / W / Space | A |
+| Pause | Esc / P | Start |
+| Help (14 animated pages) | F1 / H | Select |
+| Zoom | Q / E / mouse wheel | LB / RB |
+| Look around (a little) | drag with the mouse / Z C | right stick |
+| Reset the view | X / middle click / double click | right stick click |
+| Change theme | [ / ] | (pause menu) |
+| Fullscreen | F11 / Alt+Enter | |
+
+Command line: `--play` (skip the title), `--mode standard|advanced|quick`,
+`--theme 0-6`, `--size 1920x1080`, `--mute`, `--autoplay` (the computer plays).
+
+## Rules
+
+* Dice fall from the top and **roll** one face per cell, downward as well as sideways.
+  The face pointing at you is what counts.
+* N or more connected N's (2–6) form a combo. Ones never combo.
+* A new combo is **blue**. If no die is added in time it turns **red**.
+  The **wipe line** sweeps top to bottom and clears red dice.
+* Random dice rise from the bottom; an arrow shows the next column. When the grid is full, the game is over.
+* Multiplier = **chain** (+1 per die in a combo) + **wipes** (+1 when the line reaches
+  the bottom while combos are present, otherwise everything resets to 0) + **drops**
+  (+1 per die of a combo formed by dice falling after a clear).
+* Modes: Standard (with preview line), Advanced (no preview), Quick Run (3 minutes).
+* 7 themes: Deep Space, Vortex, Firefly Night, Card Storm, Kaleidoscope, Quicksilver,
+  Gold Rush. Each has its own procedural music, and the wipe line runs in time with
+  it (2 bars per sweep).
+
+### Speed and levels (Tetris style)
+
+Before each game you pick a **start level (1–15)**. Level 1 is slow so you can get
+used to how the dice roll. Every 25 cleared dice the level goes up.
+Labels: 1–2 Relaxed, 3–5 Normal, 6–8 Fast, 9–11 Expert, 12–13 Speedster, 14–15 Impossible.
+
+| | Level 1 | Level 5 | Level 10 | Level 15 |
+|---|---|---|---|---|
+| Fall speed (s per cell) | 1.15 | 0.60 | 0.27 | 0.12 |
+| Random dice | 1 every 16 s | 1 every 11 s | 2 every 5 s | 3 every 2.5 s |
+| Blue → red | 4.0 s | 3.4 s | 2.65 s | 1.9 s |
+
+## Visual helpers
+
+* **Landing lane**: a glass tube from the falling die down to the cell where it will
+  land, with light pulses running toward the target and a wireframe ghost cube there.
+* The camera leans slightly toward the column you are playing in, and you can look
+  at the board from the side with the mouse or the right stick.
+* **How to play** shows a live example on the board for every page, played by the
+  real rules engine (rolling, blue → red, wipe, preview, rising dice, multipliers, drop combos).
+
+## Architecture: swappable layers
+
+```
+src/core/      Game rules. Plain C++17, no dependencies, unit tests in tests/.
+               Input in (left/right/down/drop), state + events out.
+src/game/      Presentation, also portable: camera, animation, particles, HUD, menus,
+               help scenes, font rendering (stb_truetype), procedural textures,
+               synthesizer for music and sound effects.
+               Talks to the hardware ONLY through src/game/platform.h.
+src/platform/  Backends. Only platform-specific code lives here:
+  sdl3_gl/     PC (Linux/Windows): SDL3 + OpenGL 3.3, HDR + MSAA + bloom + tonemapping.
+  android/     planned: Gradle project + touch controls on top of sdl3_gl (GLES 3.0).
+  ps3/         planned: PSL1GHT backend (RSX, ioPad, audio).
+```
+
+`platform.h` is deliberately small:
+
+* **Renderer**: upload RGBA8 textures and meshes, `drawMesh` (lit), `drawTriangles`
+  (unlit, 2D or 3D), `beginOverlay` (post FX, then HUD).
+* **Audio**: accepts finished stereo float samples. Synthesis runs portably in the game layer.
+* **Files**: read assets, save small text files (settings, high scores).
+* **Input**: held buttons as abstract actions, plus optional camera look / zoom values.
+
+All saves are text files, so nothing depends on byte order (the PS3 is big-endian).
+
+### Porting to PS3 (PSL1GHT)
+
+See `src/platform/ps3/README.md`. Select it with `-DHX_PLATFORM=ps3`. The backend provides:
+
+1. `Renderer` on RSX (libgcm/rsxutil or tiny3d): 2 shaders in Cg (lit cube, sprite).
+   Bloom is optional; without post FX a plain `beginOverlay` is enough.
+2. `Audio` via `audio`/`libaudio` (float samples into the ring buffer).
+3. `Files` in `/dev_hdd0/game/HEXAHEDRON/USRDIR/`.
+4. Input via `ioPad` (right stick → `lookRateX/Y`).
+5. Build with `-DHX_NO_THREADS`; backgrounds are then generated step by step without a thread.
+
+`src/core` and `src/game` stay unchanged.
+
+### Porting to Android
+
+See `src/platform/android/README.md`. SDL3 runs on Android. Build the existing backend with `-DHX_GLES` (GLES 3.0 shaders);
+only touch controls are missing (swipe = roll, tap = drop, two-finger drag = look).
+
+### Godot as a frontend
+
+Wrap `src/core` in a GDExtension (a class around `hx::Game`). Godot handles graphics
+and sound; the rules stay identical.
+
+## Tests / tools
+
+* `build/core_tests`: rule tests (rolling, combos, blue → red, wipe, drop combos,
+  multiplier reset, game over, speed levels, multi-column rising)
+* `build/asset_preview <dir>`: all procedural textures as images
+* `build/audio_preview <dir>`: music of every theme + sound effects as WAV
+* `hexahedron --autoplay --screenshot out.ppm 600`: screenshot after 600 frames;
+  `--press FRAME ACTION` scripts key presses
+  (`HX_SAVE_DIR=/tmp/x` keeps the real save files clean)
+
+## Credits / licenses
+
+* Code: MIT license, see `LICENSE`. Copyright (c) 2026 Xma1.
+* Developed with the help of AI (Claude by Anthropic).
+* Game idea inspired by **Hexaxis XXI** (PSP, 2007) by Tim Hackett / Darksoft.
+* `third_party/stb/stb_truetype.h`: public domain / MIT (Sean Barrett).
+* Fonts Orbitron and Exo 2: SIL Open Font License 1.1 (see `assets/fonts/*-OFL.txt`).
+* The author name and year shown in the game can be changed at build time with
+  `-DHX_REMAKE_AUTHOR=\"...\"` / `-DHX_REMAKE_YEAR=\"...\"`.
