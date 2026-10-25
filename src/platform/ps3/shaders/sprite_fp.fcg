@@ -1,0 +1,9 @@
+void main(float2 vUV : TEXCOORD0, float4 vCol : COLOR0,
+          uniform sampler2D uTex, uniform float uIntensity, uniform float uLinear,
+          out float4 oColor : COLOR)
+{
+    float4 c = tex2D(uTex, vUV) * vCol;
+    if (uLinear > 0.5) c.rgb = pow(c.rgb, float3(2.2, 2.2, 2.2));
+    c.rgb *= uIntensity;
+    oColor = c;
+}

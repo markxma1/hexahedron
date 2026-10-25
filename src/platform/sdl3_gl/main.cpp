@@ -1,9 +1,13 @@
-// SDL3 + OpenGL backend: window, input, audio, files. PC (Linux/Windows), later Android.
-#include "../../game/app.h"
+// SDL3 + OpenGL (ES) backend: window, input, audio, files.
+// The same file builds for PC (Linux/Windows, GL 3.3) and Android (GLES 3.0, touch).
+#include "../../game/host.h"
+#include "../../game/log.h"
+#include "../../game/touch.h"
 #include "gl_renderer.h"
 #include <SDL3/SDL_main.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 #include <cstring>
 #include <string>
 
@@ -19,7 +23,7 @@ public:
         spec.channels = 2;
         spec.freq = 48000;
         stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
-        if (!stream_) { std::fprintf(stderr, "audio: %s\n", SDL_GetError()); return false; }
+        if (!stream_) { logMsg("audio: %s", SDL_GetError()); return false; }
         SDL_ResumeAudioStreamDevice(stream_);
         return true;
     }
@@ -47,6 +51,9 @@ public:
         const char* base = SDL_GetBasePath();
         std::string b = base ? base : "./";
         candidates_ = {b + "assets/", b + "../assets/", "assets/"};
+#ifdef SDL_PLATFORM_ANDROID
+        candidates_ = {""}; // APK assets: SDL_LoadFile reads relative paths from the APK
+#endif
 #ifdef HX_SOURCE_ASSETS
         candidates_.push_back(HX_SOURCE_ASSETS "/");
 #endif
@@ -93,67 +100,61 @@ private:
     std::string pref_, legacy_;
 };
 
-void writePPM(const char* path, const std::vector<uint8_t>& rgb, int w, int h) {
-    FILE* f = std::fopen(path, "wb");
-    if (!f) return;
-    std::fprintf(f, "P6\n%d %d\n255\n", w, h);
-    std::fwrite(rgb.data(), 1, rgb.size(), f);
-    std::fclose(f);
-}
-
 } // namespace
 
-int main(int argc, char** argv) {
-    LaunchOptions opt;
-    const char* shotPath = nullptr;
-    int shotFrame = 0, winW = 1600, winH = 900;
-    bool mute = false, fixedStep = false;
-    std::vector<std::pair<int, int>> keyScript; // (frame, action) presses for testing
-    for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
-        if (a == "--autoplay") opt.autoplay = true;
-        else if (a == "--play") opt.skipTitle = true;
-        else if (a == "--theme" && i + 1 < argc) opt.theme = std::atoi(argv[++i]);
-        else if (a == "--mode" && i + 1 < argc) {
-            std::string m = argv[++i];
-            opt.mode = m == "advanced" ? Mode::Advanced : (m == "quick" ? Mode::QuickRun : Mode::Standard);
-        } else if (a == "--screenshot" && i + 2 < argc) { shotPath = argv[++i]; shotFrame = std::atoi(argv[++i]); fixedStep = true; }
-        else if (a == "--size" && i + 1 < argc) std::sscanf(argv[++i], "%dx%d", &winW, &winH);
-        else if (a == "--mute") mute = true;
-        else if (a == "--press" && i + 2 < argc) { int f = std::atoi(argv[++i]); keyScript.push_back({f, std::atoi(argv[++i])}); }
-        else if (a == "--help") {
-            std::printf("hexahedron [--play] [--mode standard|advanced|quick] [--theme 0-6] [--autoplay]\n"
-                        "        [--size WxH] [--mute] [--screenshot out.ppm FRAME] [--press FRAME ACTION]\n");
-            return 0;
-        }
-    }
+#ifdef SDL_PLATFORM_ANDROID
+#include <android/log.h>
+static void androidLog(const char* line) { __android_log_write(ANDROID_LOG_INFO, "Hexahedron", line); }
+#endif
 
+int main(int argc, char** argv) {
+#ifdef SDL_PLATFORM_ANDROID
+    setLogSink(androidLog);
+#endif
+    HostOptions opt;
+    if (!parseHostArgs(argc, argv, opt)) return 0;
+#ifdef SDL_PLATFORM_ANDROID
+    opt.gles = true;
+#endif
+
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0"); // touches come as finger events only
+    SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
-        std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
+        logMsg("SDL_Init: %s", SDL_GetError());
         return 1;
     }
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    if (opt.gles) {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    } else {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    }
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 
-    SDL_Window* win = SDL_CreateWindow("Hexahedron", winW, winH,
-                                       SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
-    if (!win) { std::fprintf(stderr, "window: %s\n", SDL_GetError()); return 1; }
+    SDL_WindowFlags flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#ifdef SDL_PLATFORM_ANDROID
+    flags |= SDL_WINDOW_FULLSCREEN;
+#endif
+    SDL_Window* win = SDL_CreateWindow("Hexahedron", opt.winW, opt.winH, flags);
+    if (!win) { logMsg("window: %s", SDL_GetError()); return 1; }
     SDL_GLContext ctx = SDL_GL_CreateContext(win);
-    if (!ctx) { std::fprintf(stderr, "GL context: %s\n", SDL_GetError()); return 1; }
+    if (!ctx) { logMsg("GL context: %s", SDL_GetError()); return 1; }
     SDL_GL_MakeCurrent(win, ctx);
     if (!SDL_GL_SetSwapInterval(-1)) SDL_GL_SetSwapInterval(1);
     if (!hxLoadGL()) return 1;
 
-    std::fprintf(stderr, "GL: %s / %s\n", (const char*)glGetString(GL_RENDERER), (const char*)glGetString(GL_VERSION));
+    logMsg("GL: %s / %s", (const char*)glGetString(GL_RENDERER), (const char*)glGetString(GL_VERSION));
     GLRenderer renderer;
-    if (!renderer.init(4)) return 1;
+    if (!renderer.init(4, opt.gles)) return 1;
     SDLAudio sdlAudio;
     NullAudio nullAudio;
     Audio* audio = &nullAudio;
-    if (!mute && !shotPath && sdlAudio.init()) audio = &sdlAudio;
+    if (!opt.mute && opt.shotPath.empty() && sdlAudio.init()) audio = &sdlAudio;
     SDLFiles files;
     files.init();
 
@@ -161,22 +162,34 @@ int main(int argc, char** argv) {
     plat.renderer = &renderer;
     plat.audio = audio;
     plat.files = &files;
+#ifdef SDL_PLATFORM_ANDROID
+    plat.fullscreen = true;
+    plat.hasWindow = false;
+#endif
 
-    App app;
     int pw, ph;
     SDL_GetWindowSizeInPixels(win, &pw, &ph);
     renderer.setViewport(pw, ph);
-    if (!app.init(&plat, opt)) return 1;
+    Host host;
+    if (!host.init(&plat, opt)) return 1;
 
+    TouchGestures touch;
     std::vector<SDL_Gamepad*> pads;
     Uint64 last = SDL_GetTicksNS();
-    int frameNo = 0;
     bool running = true;
-    float mouseDX = 0, mouseDY = 0, wheel = 0;
-    bool lookReset = false;
+    // mouse: drag = look around, click without drag = tap (menus)
+    float mouseDX = 0, mouseDY = 0, wheel = 0, pressX = 0, pressY = 0, dragDist = 0;
+    bool lookReset = false, mouseTap = false, backKey = false;
+    float tapX = 0, tapY = 0;
     while (running) {
         mouseDX = mouseDY = wheel = 0;
-        lookReset = false;
+        lookReset = mouseTap = backKey = false;
+        double now_s = SDL_GetTicksNS() / 1e9;
+        SDL_GetWindowSizeInPixels(win, &pw, &ph);
+        int ww = 1, wh = 1;
+        SDL_GetWindowSize(win, &ww, &wh);
+        float pxScale = ww > 0 ? (float)pw / ww : 1.0f; // window coords -> pixels
+        touch.setScreen(pw, ph);
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             switch (ev.type) {
@@ -184,15 +197,30 @@ int main(int argc, char** argv) {
             case SDL_EVENT_KEY_DOWN:
                 if (ev.key.key == SDLK_F11 || (ev.key.key == SDLK_RETURN && (ev.key.mod & SDL_KMOD_ALT)))
                     plat.requestFullscreenToggle = true;
+                if (ev.key.key == SDLK_AC_BACK) backKey = true; // Android back button
                 break;
             case SDL_EVENT_MOUSE_MOTION:
-                // drag with left or right button turns the camera a little
-                if (ev.motion.state & (SDL_BUTTON_LMASK | SDL_BUTTON_RMASK)) { mouseDX += ev.motion.xrel; mouseDY += ev.motion.yrel; }
+                if (ev.motion.state & (SDL_BUTTON_LMASK | SDL_BUTTON_RMASK)) {
+                    mouseDX += ev.motion.xrel; mouseDY += ev.motion.yrel;
+                    dragDist += std::fabs(ev.motion.xrel) + std::fabs(ev.motion.yrel);
+                }
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
                 if (ev.button.button == SDL_BUTTON_MIDDLE || ev.button.clicks >= 2) lookReset = true;
+                if (ev.button.button == SDL_BUTTON_LEFT) { pressX = ev.button.x; pressY = ev.button.y; dragDist = 0; }
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                if (ev.button.button == SDL_BUTTON_LEFT && dragDist < 6) {
+                    mouseTap = true; tapX = ev.button.x * pxScale; tapY = ev.button.y * pxScale;
+                }
+                (void)pressX; (void)pressY;
                 break;
             case SDL_EVENT_MOUSE_WHEEL: wheel += ev.wheel.y; break;
+            // finger coordinates are normalized 0..1
+            case SDL_EVENT_FINGER_DOWN: touch.down((int64_t)ev.tfinger.fingerID, ev.tfinger.x * pw, ev.tfinger.y * ph, now_s); break;
+            case SDL_EVENT_FINGER_MOTION: touch.move((int64_t)ev.tfinger.fingerID, ev.tfinger.x * pw, ev.tfinger.y * ph, now_s); break;
+            case SDL_EVENT_FINGER_UP: touch.up((int64_t)ev.tfinger.fingerID, ev.tfinger.x * pw, ev.tfinger.y * ph, now_s); break;
+            case SDL_EVENT_FINGER_CANCELED: touch.cancelAll(); break;
             case SDL_EVENT_GAMEPAD_ADDED: {
                 SDL_Gamepad* g = SDL_OpenGamepad(ev.gdevice.which);
                 if (g) pads.push_back(g);
@@ -207,8 +235,10 @@ int main(int argc, char** argv) {
         }
         if (plat.requestFullscreenToggle) {
             plat.requestFullscreenToggle = false;
+#ifndef SDL_PLATFORM_ANDROID
             plat.fullscreen = !plat.fullscreen;
             SDL_SetWindowFullscreen(win, plat.fullscreen);
+#endif
         }
 
         InputState in;
@@ -219,22 +249,19 @@ int main(int argc, char** argv) {
         in.held[ActDown] = k[SDL_SCANCODE_DOWN] || k[SDL_SCANCODE_S];
         in.held[ActDrop] = k[SDL_SCANCODE_SPACE];
         in.held[ActConfirm] = k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER];
-        in.held[ActBack] = k[SDL_SCANCODE_ESCAPE] || k[SDL_SCANCODE_BACKSPACE];
+        in.held[ActBack] = k[SDL_SCANCODE_ESCAPE] || k[SDL_SCANCODE_BACKSPACE] || k[SDL_SCANCODE_AC_BACK] || backKey;
         in.held[ActPause] = k[SDL_SCANCODE_P];
         in.held[ActHelp] = k[SDL_SCANCODE_F1] || k[SDL_SCANCODE_H];
         in.held[ActZoomIn] = k[SDL_SCANCODE_Q];
         in.held[ActZoomOut] = k[SDL_SCANCODE_E];
         in.held[ActPrevTheme] = k[SDL_SCANCODE_LEFTBRACKET];
         in.held[ActNextTheme] = k[SDL_SCANCODE_RIGHTBRACKET];
-        {
-            int ww = 1, wh = 1;
-            SDL_GetWindowSize(win, &ww, &wh);
-            in.lookDX = mouseDX / (float)(wh > 0 ? wh : 1);
-            in.lookDY = mouseDY / (float)(wh > 0 ? wh : 1);
-        }
+        in.lookDX = mouseDX / (float)(wh > 0 ? wh : 1);
+        in.lookDY = mouseDY / (float)(wh > 0 ? wh : 1);
         in.zoomSteps = wheel;
         in.lookReset = lookReset || k[SDL_SCANCODE_X];
         in.lookRateX = (k[SDL_SCANCODE_C] ? 1.0f : 0.0f) - (k[SDL_SCANCODE_Z] ? 1.0f : 0.0f);
+        if (mouseTap) { in.tap = true; in.tapX = tapX; in.tapY = tapY; }
         for (SDL_Gamepad* g : pads) {
             auto B = [&](SDL_GamepadButton b) { return SDL_GetGamepadButton(g, b); };
             float lx = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTX) / 32767.0f;
@@ -256,26 +283,14 @@ int main(int argc, char** argv) {
             if (std::fabs(ry) > 0.2f) in.lookRateY += ry;
             in.lookReset |= B(SDL_GAMEPAD_BUTTON_RIGHT_STICK);
         }
-        for (auto& ks : keyScript)
-            if (frameNo == ks.first && ks.second >= 0 && ks.second < ActCount) in.held[ks.second] = true;
+        touch.apply(in, now_s);
 
         Uint64 now = SDL_GetTicksNS();
-        float dt = fixedStep ? 1.0f / 60.0f : (now - last) / 1e9f;
+        float dt = (now - last) / 1e9f;
         last = now;
-
-        SDL_GetWindowSizeInPixels(win, &pw, &ph);
         renderer.setViewport(pw, ph);
-        app.frame(dt, in);
-        if (app.quit()) running = false;
-
-        if (shotPath && frameNo == shotFrame) {
-            std::vector<uint8_t> rgb;
-            renderer.readPixels(rgb);
-            writePPM(shotPath, rgb, pw, ph);
-            running = false;
-        }
+        if (!host.frame(dt, in)) running = false;
         SDL_GL_SwapWindow(win);
-        ++frameNo;
     }
     for (SDL_Gamepad* g : pads) SDL_CloseGamepad(g);
     SDL_GL_DestroyContext(ctx);

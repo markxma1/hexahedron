@@ -8,40 +8,60 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # --- portable layers (no platform dependencies) ---------------------------
-add_library(hx_core STATIC src/core/game.cpp)
+# All .cpp files in src/core and src/game are picked up automatically, so a new
+# shared file needs no build change on any platform (the PS3 Makefile does the same).
+file(GLOB HX_CORE_SOURCES CONFIGURE_DEPENDS src/core/*.cpp)
+file(GLOB HX_GAME_SOURCES CONFIGURE_DEPENDS src/game/*.cpp)
+add_library(hx_core STATIC ${HX_CORE_SOURCES})
 target_include_directories(hx_core PUBLIC src)
-
-add_library(hx_game STATIC
-  src/game/app.cpp
-  src/game/assets.cpp
-  src/game/autopilot.cpp
-  src/game/font.cpp
-  src/game/help_scenes.cpp
-  src/game/synth.cpp)
+add_library(hx_game STATIC ${HX_GAME_SOURCES})
 target_link_libraries(hx_game PUBLIC hx_core)
 find_package(Threads REQUIRED)
 target_link_libraries(hx_game PUBLIC Threads::Threads)
 
-# --- tests -----------------------------------------------------------------
+# --- platform backend -------------------------------------------------------
+#   sdl3_gl : PC (Linux/Windows), SDL3 + OpenGL 3.3        (default)
+#   android : same sdl3_gl code as a shared library, GLES 3.0 + touch
+#             (built by Gradle from src/platform/android, selected automatically)
+#   ps3     : PSL1GHT backend, built with its own Makefile in src/platform/ps3
+set(HX_PLATFORM "sdl3_gl" CACHE STRING "Platform backend: sdl3_gl | android")
+if(ANDROID)
+  set(HX_PLATFORM "android" CACHE STRING "" FORCE)
+endif()
+set(HX_SDL_BACKEND_SOURCES
+  src/platform/sdl3_gl/main.cpp
+  src/platform/sdl3_gl/gl_renderer.cpp)
+
+if(HX_PLATFORM STREQUAL "android")
+  include(FetchContent)
+  FetchContent_Declare(SDL3
+    URL https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz
+    URL_HASH SHA256=9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3)
+  set(SDL_SHARED ON CACHE BOOL "" FORCE)
+  set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+  set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(SDL3)
+  add_library(main SHARED ${HX_SDL_BACKEND_SOURCES})   # SDL's Java side loads libmain.so
+  target_link_libraries(main hx_game SDL3::SDL3 GLESv3 android log)
+  return()
+endif()
+
+# --- tests and tools (host only) --------------------------------------------
 enable_testing()
 add_executable(core_tests tests/core_tests.cpp)
 target_link_libraries(core_tests hx_core)
 add_test(NAME core_tests COMMAND core_tests)
-
+add_executable(touch_tests tests/touch_tests.cpp src/game/touch.cpp)
+target_include_directories(touch_tests PRIVATE src)
+add_test(NAME touch_tests COMMAND touch_tests)
 add_executable(asset_preview tools/asset_preview.cpp)
 target_link_libraries(asset_preview hx_game)
+add_executable(audio_preview tools/audio_preview.cpp)
+target_link_libraries(audio_preview hx_game)
 
-# --- platform backend -------------------------------------------------------
-# sdl3_gl: PC (Linux/Windows), also the base for Android (with HX_GLES).
-# ps3:     PSL1GHT backend, planned (see src/platform/ps3/README.md).
-set(HX_PLATFORM "sdl3_gl" CACHE STRING "Platform backend: sdl3_gl | ps3")
-if(HX_PLATFORM STREQUAL "sdl3_gl")
-  find_package(SDL3 CONFIG)
-endif()
-if(HX_PLATFORM STREQUAL "sdl3_gl" AND SDL3_FOUND)
-  add_executable(hexahedron
-    src/platform/sdl3_gl/main.cpp
-    src/platform/sdl3_gl/gl_renderer.cpp)
+find_package(SDL3 CONFIG)
+if(SDL3_FOUND)
+  add_executable(hexahedron ${HX_SDL_BACKEND_SOURCES})
   target_link_libraries(hexahedron hx_game SDL3::SDL3)
   target_compile_definitions(hexahedron PRIVATE HX_SOURCE_ASSETS="${CMAKE_SOURCE_DIR}/assets")
   find_package(OpenGL REQUIRED)
@@ -49,7 +69,5 @@ if(HX_PLATFORM STREQUAL "sdl3_gl" AND SDL3_FOUND)
   add_custom_command(TARGET hexahedron POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:hexahedron>/assets)
 else()
-  message(WARNING "No backend built for HX_PLATFORM=${HX_PLATFORM} (SDL3 missing or backend not implemented yet) - only the portable libraries and tests")
+  message(WARNING "SDL3 not found - only the portable libraries and tests are built")
 endif()
-add_executable(audio_preview tools/audio_preview.cpp)
-target_link_libraries(audio_preview hx_game)

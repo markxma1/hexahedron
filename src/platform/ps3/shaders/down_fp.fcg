@@ -1,0 +1,9 @@
+void main(float2 vUV : TEXCOORD0, uniform sampler2D uSrc, uniform float2 uHalfPixel, out float4 oColor : COLOR)
+{
+    float3 s = tex2D(uSrc, vUV).rgb * 4.0;
+    s += tex2D(uSrc, vUV - uHalfPixel).rgb;
+    s += tex2D(uSrc, vUV + uHalfPixel).rgb;
+    s += tex2D(uSrc, vUV + float2(uHalfPixel.x, -uHalfPixel.y)).rgb;
+    s += tex2D(uSrc, vUV - float2(uHalfPixel.x, -uHalfPixel.y)).rgb;
+    oColor = float4(s / 8.0, 1.0);
+}

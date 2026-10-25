@@ -1,2 +1,17 @@
 build/
 *.ppm
+
+# PS3 build output
+src/platform/ps3/build/
+src/platform/ps3/*.elf
+src/platform/ps3/*.self
+src/platform/ps3/*.pkg
+src/platform/ps3/*.map
+src/platform/ps3/tools/cgcomp-full
+
+# Android build output
+src/platform/android/.gradle/
+src/platform/android/build/
+src/platform/android/app/build/
+src/platform/android/app/.cxx/
+src/platform/android/local.properties

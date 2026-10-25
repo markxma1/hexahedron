@@ -1,4 +1,4 @@
-// OpenGL 3.3 implementation of hx::Renderer with HDR, MSAA, bloom and tone mapping.
+// OpenGL 3.3 / OpenGL ES 3.0 implementation of hx::Renderer with HDR, MSAA, bloom and tone mapping.
 #pragma once
 #include "../../game/platform.h"
 #include "gl_funcs.h"
@@ -8,7 +8,7 @@ namespace hx {
 
 class GLRenderer : public Renderer {
 public:
-    bool init(int msaa);
+    bool init(int msaa, bool gles);
     void setViewport(int w, int h) { width_ = w; height_ = h; }
 
     TexId createTexture(int w, int h, const uint8_t* rgba, bool mipmaps, bool repeat) override;
@@ -21,8 +21,7 @@ public:
     void beginOverlay() override;
     void endFrame() override;
 
-    // Reads the finished frame (RGB, top row first).
-    void readPixels(std::vector<uint8_t>& rgb);
+    bool readPixels(std::vector<uint8_t>& rgb, int& w, int& h) override;
 
 private:
     struct Mesh { GLuint vao, vbo, ibo; int count; };
@@ -34,6 +33,8 @@ private:
     GLuint compile(const char* vs, const char* fs);
 
     int width_ = 1, height_ = 1, tw_ = 0, th_ = 0, msaa_ = 4;
+    bool gles_ = false;
+    GLenum hdrFormat_ = 0x881A; // GL_RGBA16F
     std::vector<Mesh> meshes_;
     GLuint progMesh_ = 0, progSprite_ = 0, progBright_ = 0, progDown_ = 0, progUp_ = 0, progComposite_ = 0;
     GLuint spriteVao_ = 0, spriteVbo_ = 0, quadVao_ = 0;

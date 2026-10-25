@@ -42,7 +42,8 @@
     X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, glCheckFramebufferStatus)              \
     X(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer)                            \
     X(PFNGLACTIVETEXTUREPROC, glActiveTexture)                                \
-    X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate)
+    X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate)                        \
+    X(PFNGLGETSTRINGIPROC, glGetStringi)
 
 #define HX_DECLARE(type, name) extern type hx_##name;
 HX_GL_FUNCS(HX_DECLARE)
@@ -87,5 +88,6 @@ HX_GL_FUNCS(HX_DECLARE)
 #define glBlitFramebuffer hx_glBlitFramebuffer
 #define glActiveTexture hx_glActiveTexture
 #define glBlendFuncSeparate hx_glBlendFuncSeparate
+#define glGetStringi hx_glGetStringi
 
 bool hxLoadGL();

@@ -1,0 +1,11 @@
+// Unlit triangles (sprites, text, effects).
+// The vertex color goes through COLOR0: a float4 TEXCOORD is set up as 3D by cgcomp
+// and loses its w (alpha) under perspective.
+void main(float3 aPos : POSITION, float2 aUV : TEXCOORD0, float4 aCol : COLOR0,
+          uniform float4x4 uMVP,
+          out float4 oPos : POSITION, out float2 vUV : TEXCOORD0, out float4 vCol : COLOR0)
+{
+    vUV = aUV;
+    vCol = aCol;
+    oPos = mul(uMVP, float4(aPos, 1.0));
+}

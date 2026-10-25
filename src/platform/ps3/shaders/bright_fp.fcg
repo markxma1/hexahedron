@@ -1,0 +1,15 @@
+void main(float2 vUV : TEXCOORD0, uniform sampler2D uSrc, uniform float2 uHalfPixel,
+          uniform float uThreshold, out float4 oColor : COLOR)
+{
+    float3 c = tex2D(uSrc, vUV + float2(-uHalfPixel.x, -uHalfPixel.y)).rgb
+             + tex2D(uSrc, vUV + float2( uHalfPixel.x, -uHalfPixel.y)).rgb
+             + tex2D(uSrc, vUV + float2(-uHalfPixel.x,  uHalfPixel.y)).rgb
+             + tex2D(uSrc, vUV + float2( uHalfPixel.x,  uHalfPixel.y)).rgb;
+    c *= 0.25;
+    c = min(c, float3(40.0, 40.0, 40.0));
+    float br = max(c.r, max(c.g, c.b));
+    float soft = saturate(br - uThreshold + 0.5);
+    soft = soft * soft * 0.5;
+    float contrib = max(soft, br - uThreshold) / max(br, 1e-4);
+    oColor = float4(c * contrib, 1.0);
+}

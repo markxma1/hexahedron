@@ -1,0 +1,6 @@
+// Fullscreen triangle for the post passes. v = 0 is the TOP row (RSX surfaces are top-down).
+void main(float2 aPos : POSITION, out float4 oPos : POSITION, out float2 vUV : TEXCOORD0)
+{
+    vUV = float2(aPos.x * 0.5 + 0.5, 0.5 - aPos.y * 0.5);
+    oPos = float4(aPos, 0.0, 1.0);
+}

@@ -135,6 +135,13 @@ private:
     void stepGame(float dt, const Input& in);
     void handleEvent(const Event& e);
     void setTheme(int t);
+    // Tap / click targets, collected while drawing the menus (used next frame).
+    struct Hit { float x0, y0, x1, y1; int sel; Action act; };
+    std::vector<Hit> hits_;
+    void addHit(float x0, float y0, float x1, float y1, int sel, Action act) { hits_.push_back(Hit{x0, y0, x1, y1, sel, act}); }
+    int* selVar();
+    void handleTap(bool inject[ActCount]);
+    void drawTouchButtons(Batch& b, int w, int h, float s);
     bool pressed(Action a) const { return pressed_[a]; }
     bool repeat(Action a) const { return repeat_[a]; }
 

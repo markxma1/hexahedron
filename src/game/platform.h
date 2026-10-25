@@ -65,6 +65,8 @@ public:
                                bool world, bool depthTest, float intensity) = 0;
     virtual void beginOverlay() = 0;
     virtual void endFrame() = 0;
+    // Optional: finished frame as RGB, top row first (screenshots for tests).
+    virtual bool readPixels(std::vector<uint8_t>& rgb, int& w, int& h) { (void)rgb; (void)w; (void)h; return false; }
 };
 
 class Audio {
@@ -96,8 +98,13 @@ struct InputState {
     // Camera look (optional; a backend without mouse/stick just leaves these 0).
     float lookDX = 0, lookDY = 0;   // drag this frame, in screen heights (mouse)
     float lookRateX = 0, lookRateY = 0; // held rate -1..1 (keys / right stick)
-    float zoomSteps = 0;            // mouse wheel notches, + = closer
+    float zoomSteps = 0;            // mouse wheel notches / pinch, + = closer
     bool lookReset = false;
+    // Pointer tap (mouse click without drag, or finger tap) in pixels, (0,0)=top-left.
+    // Menus and on-screen buttons react to it.
+    bool tap = false;
+    float tapX = 0, tapY = 0;
+    bool touchUi = false;           // last input came from a touch screen: show touch buttons
 };
 
 struct Platform {
@@ -107,6 +114,7 @@ struct Platform {
     bool requestQuit = false;
     bool requestFullscreenToggle = false;
     bool fullscreen = false;
+    bool hasWindow = true;          // false on consoles/phones: always fullscreen, no toggle
 };
 
 } // namespace hx

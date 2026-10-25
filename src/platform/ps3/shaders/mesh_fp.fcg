@@ -1,0 +1,24 @@
+// Lit mesh, fragment part: albedo * (hemisphere ambient + key + fill) + Blinn specular + fresnel + emissive.
+void main(float3 vWorld : TEXCOORD0, float3 vN : TEXCOORD1, float2 vUV : TEXCOORD2,
+          uniform sampler2D uTex, uniform float4 uTint, uniform float3 uEmissive,
+          uniform float uSpec, uniform float uShin, uniform float3 uCam,
+          uniform float3 uLightDir, uniform float3 uLightCol, uniform float3 uSky, uniform float3 uGround,
+          out float4 oColor : COLOR)
+{
+    float4 t = tex2D(uTex, vUV);
+    float3 alb = pow(t.rgb, float3(2.2, 2.2, 2.2)) * uTint.rgb;
+    float3 N = normalize(vN);
+    float3 V = normalize(uCam - vWorld);
+    float3 L = normalize(uLightDir);
+    float nl = max(dot(N, L), 0.0);
+    float3 F = normalize(float3(0.35, -0.15, 1.0));
+    float nf = max(dot(N, F), 0.0) * 0.45;
+    float3 amb = lerp(uGround, uSky, N.y * 0.5 + 0.5);
+    float3 H = normalize(L + V);
+    float sp = pow(max(dot(N, H), 0.0), uShin) * uSpec * step(0.0, nl);
+    float fres = pow(1.0 - max(dot(N, V), 0.0), 5.0);
+    float lum = dot(alb, float3(0.3, 0.55, 0.15));
+    float3 col = alb * (amb + nl * uLightCol + nf * uLightCol) + sp * uLightCol + fres * uSky * 0.5
+               + uEmissive * smoothstep(0.02, 0.35, lum);
+    oColor = float4(col, uTint.a);
+}

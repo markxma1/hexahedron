@@ -1,0 +1,12 @@
+// Lit mesh, vertex part (same math as the GLSL mesh shader on PC/Android).
+void main(float3 aPos : POSITION, float3 aNrm : NORMAL, float2 aUV : TEXCOORD0,
+          uniform float4x4 uModel, uniform float4x4 uViewProj,
+          out float4 oPos : POSITION, out float3 vWorld : TEXCOORD0,
+          out float3 vN : TEXCOORD1, out float2 vUV : TEXCOORD2)
+{
+    float4 w = mul(uModel, float4(aPos, 1.0));
+    vWorld = w.xyz;
+    vN = mul(uModel, float4(aNrm, 0.0)).xyz;
+    vUV = aUV;
+    oPos = mul(uViewProj, w);
+}

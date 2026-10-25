@@ -1,4 +1,6 @@
+#include <algorithm>
 #include "gl_renderer.h"
+#include "../../game/log.h"
 #include <cstdio>
 #include <cstring>
 
@@ -10,7 +12,7 @@ bool hxLoadGL() {
     bool ok = true;
 #define HX_LOAD(type, name)                                                  \
     hx_##name = (type)SDL_GL_GetProcAddress(#name);                          \
-    if (!hx_##name) { std::fprintf(stderr, "GL: missing %s\n", #name); ok = false; }
+    if (!hx_##name) { hx::logMsg("GL: missing %s", #name); ok = false; }
     HX_GL_FUNCS(HX_LOAD)
 #undef HX_LOAD
     return ok;
@@ -24,11 +26,9 @@ namespace hx {
 
 namespace {
 
-#ifdef HX_GLES // Android / embedded: OpenGL ES 3.0
-const char* kHeader = "#version 300 es\nprecision highp float;\n";
-#else
-const char* kHeader = "#version 330 core\n";
-#endif
+// Same shaders for desktop GL 3.3 and OpenGL ES 3.0 (Android); only the header differs.
+const char* kHeaderGL = "#version 330 core\n";
+const char* kHeaderES = "#version 300 es\nprecision highp float;\nprecision highp int;\n";
 
 const char* kMeshVS = R"(
 layout(location=0) in vec3 aPos;
@@ -212,9 +212,10 @@ void mul4(const float* a, const float* b, float* out) { // out = a * b (column-m
 } // namespace
 
 GLuint GLRenderer::compile(const char* vs, const char* fs) {
-    auto sh = [](GLenum type, const char* src) {
+    const char* header = gles_ ? kHeaderES : kHeaderGL;
+    auto sh = [header](GLenum type, const char* src) {
         GLuint s = glCreateShader(type);
-        const char* parts[2] = {kHeader, src};
+        const char* parts[2] = {header, src};
         glShaderSource(s, 2, parts, nullptr);
         glCompileShader(s);
         GLint ok = 0;
@@ -222,7 +223,7 @@ GLuint GLRenderer::compile(const char* vs, const char* fs) {
         if (!ok) {
             char log[2048];
             glGetShaderInfoLog(s, sizeof log, nullptr, log);
-            std::fprintf(stderr, "shader error: %s\n", log);
+            logMsg("shader error: %s", log);
         }
         return s;
     };
@@ -235,13 +236,30 @@ GLuint GLRenderer::compile(const char* vs, const char* fs) {
     if (!ok) {
         char log[2048];
         glGetProgramInfoLog(p, sizeof log, nullptr, log);
-        std::fprintf(stderr, "link error: %s\n", log);
+        logMsg("link error: %s", log);
     }
     return p;
 }
 
-bool GLRenderer::init(int msaa) {
-    msaa_ = msaa;
+bool GLRenderer::init(int msaa, bool gles) {
+    gles_ = gles;
+    GLint maxSamples = 0;
+    glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
+    msaa_ = std::max(0, std::min(msaa, (int)maxSamples));
+    // HDR targets need float render support on GLES (desktop GL 3.3 always has it).
+    hdrFormat_ = GL_RGBA16F;
+    if (gles_) {
+        bool half = false;
+        GLint n = 0;
+        glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+        for (GLint i = 0; i < n; ++i) {
+            const char* e = (const char*)glGetStringi(GL_EXTENSIONS, (GLuint)i);
+            if (e && (!std::strcmp(e, "GL_EXT_color_buffer_half_float") || !std::strcmp(e, "GL_EXT_color_buffer_float"))) half = true;
+        }
+        if (!half) hdrFormat_ = GL_RGBA8;
+    }
+    logMsg("GL: %s, MSAA %dx, %s targets", gles_ ? "ES 3.0" : "3.3 core", msaa_,
+                 hdrFormat_ == GL_RGBA16F ? "half float" : "8-bit");
     progMesh_ = compile(kMeshVS, kMeshFS);
     progSprite_ = compile(kSpriteVS, kSpriteFS);
     progBright_ = compile(kFullVS, kBrightFS);
@@ -316,7 +334,8 @@ void GLRenderer::makeTarget(Target& t, int w, int h) {
     t.w = w; t.h = h;
     glGenTextures(1, &t.tex);
     glBindTexture(GL_TEXTURE_2D, t.tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_HALF_FLOAT, nullptr);
+    if (hdrFormat_ == GL_RGBA16F) glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_HALF_FLOAT, nullptr);
+    else glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -342,7 +361,7 @@ void GLRenderer::ensureTargets() {
     }
     glGenRenderbuffers(1, &msColor_);
     glBindRenderbuffer(GL_RENDERBUFFER, msColor_);
-    glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa_, GL_RGBA16F, tw_, th_);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa_, hdrFormat_, tw_, th_);
     glGenRenderbuffers(1, &msDepth_);
     glBindRenderbuffer(GL_RENDERBUFFER, msDepth_);
     glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa_, GL_DEPTH_COMPONENT24, tw_, th_);
@@ -351,7 +370,7 @@ void GLRenderer::ensureTargets() {
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, msColor_);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, msDepth_);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        std::fprintf(stderr, "GL: MSAA framebuffer incomplete\n");
+        logMsg("GL: MSAA framebuffer incomplete");
 
     freeTarget(hdr_);
     makeTarget(hdr_, tw_, th_);
@@ -514,15 +533,20 @@ void GLRenderer::endFrame() {
     inOverlay_ = false;
 }
 
-void GLRenderer::readPixels(std::vector<uint8_t>& rgb) {
-    rgb.resize((size_t)width_ * height_ * 3);
-    std::vector<uint8_t> tmp(rgb.size());
+bool GLRenderer::readPixels(std::vector<uint8_t>& rgb, int& w, int& h) {
+    w = width_; h = height_;
+    std::vector<uint8_t> tmp((size_t)w * h * 4);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
     glReadBuffer(GL_BACK);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, width_, height_, GL_RGB, GL_UNSIGNED_BYTE, tmp.data());
-    for (int y = 0; y < height_; ++y)
-        std::memcpy(&rgb[(size_t)y * width_ * 3], &tmp[(size_t)(height_ - 1 - y) * width_ * 3], (size_t)width_ * 3);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, tmp.data()); // RGBA works on GL and GLES
+    rgb.resize((size_t)w * h * 3);
+    for (int y = 0; y < h; ++y) {
+        const uint8_t* src = &tmp[(size_t)(h - 1 - y) * w * 4];
+        uint8_t* dst = &rgb[(size_t)y * w * 3];
+        for (int x = 0; x < w; ++x) { dst[x * 3] = src[x * 4]; dst[x * 3 + 1] = src[x * 4 + 1]; dst[x * 3 + 2] = src[x * 4 + 2]; }
+    }
+    return true;
 }
 
 } // namespace hx

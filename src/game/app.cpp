@@ -1,4 +1,5 @@
 #include "app.h"
+#include "log.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -95,11 +96,11 @@ bool App::init(Platform* p, const LaunchOptions& opt) {
 
     std::vector<uint8_t> ttf;
     if (!p->files->readAsset("fonts/Orbitron.ttf", ttf) || !fontTitle_.load(gfx_, ttf, 96)) {
-        std::fprintf(stderr, "hexahedron: cannot load fonts/Orbitron.ttf\n");
+        logMsg("hexahedron: cannot load fonts/Orbitron.ttf");
         return false;
     }
     if (!p->files->readAsset("fonts/Exo2.ttf", ttf) || !fontBody_.load(gfx_, ttf, 72)) {
-        std::fprintf(stderr, "hexahedron: cannot load fonts/Exo2.ttf\n");
+        logMsg("hexahedron: cannot load fonts/Exo2.ttf");
         return false;
     }
 
@@ -280,6 +281,8 @@ void App::frame(float dt, const InputState& in) {
     frameDt_ = dt;
     screenTime_ += dt;
     in_ = in;
+    bool inject[ActCount] = {};
+    if (in.tap) handleTap(inject);
     for (int a = 0; a < ActCount; ++a) {
         pressed_[a] = in.held[a] && !prevHeld_[a];
         repeat_[a] = false;
@@ -289,6 +292,7 @@ void App::frame(float dt, const InputState& in) {
             if (repeatTimer_[a] <= 0) { repeat_[a] = true; repeatTimer_[a] = 0.08f; }
         }
         prevHeld_[a] = in.held[a];
+        if (inject[a]) pressed_[a] = repeat_[a] = true;
     }
 
     uploadBackgrounds();
@@ -503,7 +507,7 @@ void App::updateOptions() {
         switch (optSel_) {
         case 0: settings_.musicVol = std::max(0, std::min(10, settings_.musicVol + (d ? d : 1))); if (!d && settings_.musicVol == 10) settings_.musicVol = 0; break;
         case 1: settings_.sfxVol = std::max(0, std::min(10, settings_.sfxVol + (d ? d : 1))); if (!d && settings_.sfxVol == 10) settings_.sfxVol = 0; break;
-        case 2: plat_->requestFullscreenToggle = true; break;
+        case 2: if (plat_->hasWindow) plat_->requestFullscreenToggle = true; break;
         case 3: {
             int m = settings_.themeMode + (d ? d : 1);
             if (m < -1) m = kThemeCount - 1;
@@ -1070,6 +1074,7 @@ void App::render() {
     if (screen_ == Screen::Playing || screen_ == Screen::Paused || screen_ == Screen::GameOver)
         drawHud(b, w, h);
     drawMenus(b, w, h);
+    drawTouchButtons(b, w, h, h / 1080.0f);
     b.flush();
     gfx_->endFrame();
 }
@@ -1510,6 +1515,46 @@ void App::drawTitleLogo(Batch& b, float cx, float y, float s) {
                            rgba(1, 1, 1, 0.55f), Align::Center, 2 * s);
 }
 
+int* App::selVar() {
+    switch (screen_) {
+    case Screen::Title: return &menuSel_;
+    case Screen::Options: return &optSel_;
+    case Screen::Paused: return &pauseSel_;
+    default: return nullptr;
+    }
+}
+
+// A tap / click hits the topmost target drawn last frame: select it, then press its action.
+void App::handleTap(bool inject[ActCount]) {
+    for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
+        const Hit& h = *it;
+        if (in_.tapX < h.x0 || in_.tapX > h.x1 || in_.tapY < h.y0 || in_.tapY > h.y1) continue;
+        if (h.sel >= 0) {
+            if (int* v = selVar()) *v = h.sel;
+        }
+        inject[h.act] = true;
+        return;
+    }
+}
+
+// On-screen buttons for touch screens (pause while playing, back in menus).
+void App::drawTouchButtons(Batch& b, int w, int h, float s) {
+    (void)h;
+    if (!in_.touchUi) return;
+    const Theme& th = theme(theme_);
+    float r = 46 * s;
+    auto button = [&](float cx, float cy, const char* label, Action act) {
+        b.begin(spriteTex_, Blend::Alpha, false);
+        sprite(b, SprDot, cx - r, cy - r, cx + r, cy + r, rgba(0, 0, 0, 0.45f));
+        b.begin(spriteTex_, Blend::Additive, false);
+        sprite(b, SprRing, cx - r, cy - r, cx + r, cy + r, col(th.accent, 0.8f));
+        fontTitle_.drawShadowed(b, label, cx, cy - 22 * s, 40 * s, rgba(1, 1, 1), Align::Center, 2 * s);
+        addHit(cx - r * 1.4f, cy - r * 1.4f, cx + r * 1.4f, cy + r * 1.4f, -1, act);
+    };
+    if (screen_ == Screen::Playing) button(w * 0.5f, 70 * s, "II", ActPause);
+    else if (screen_ != Screen::Title && screen_ != Screen::GameOver && screen_ != Screen::Paused) button(70 * s, 70 * s, "<", ActBack);
+}
+
 void App::drawMenuList(Batch& b, const std::vector<std::string>& items, int sel, float cx, float y, float size, float s) {
     const Theme& th = theme(theme_);
     float step = size * 1.45f;
@@ -1524,6 +1569,8 @@ void App::drawMenuList(Batch& b, const std::vector<std::string>& items, int sel,
             fontTitle_.draw(b, ">", ax + 6 * s * std::sin(time_ * 6), yy, size, col(th.accent), Align::Left);
         }
         fontTitle_.drawShadowed(b, items[i], cx, yy, size, on ? rgba(1, 1, 1) : rgba(0.7f, 0.75f, 0.85f, 0.85f), Align::Center, 3 * s);
+        float hw = fontTitle_.width(items[i], size) * 0.5f + 60 * s;
+        addHit(cx - hw, yy - size * 0.2f, cx + hw, yy + size * 1.25f, (int)i, ActConfirm);
     }
 }
 
@@ -1558,9 +1605,15 @@ void App::drawHelp(Batch& b, int w, int h, float s) {
     char pg[48];
     std::snprintf(pg, sizeof pg, "<  %d OF %d  >", helpPage_ + 1, kHelpCount);
     fontBody_.drawShadowed(b, pg, cx, y0 + ph - 80 * s, 30 * s, rgba(0.75f, 0.8f, 0.9f), Align::Center, 4 * s);
+    addHit(x0 + pw, 0, (float)w, (float)h, -1, ActRight);      // tap the live scene: next page
+    addHit(cx - 220 * s, y0 + ph - 110 * s, cx - 40 * s, y0 + ph - 20 * s, -1, ActLeft);
+    addHit(cx + 40 * s, y0 + ph - 110 * s, cx + 220 * s, y0 + ph - 20 * s, -1, ActRight);
 }
 
 void App::drawScores(Batch& b, int w, int h, float s) {
+    addHit(0, 0, w / 3.0f, (float)h, -1, ActLeft);
+    addHit(w / 3.0f, 0, w * 2 / 3.0f, (float)h, -1, ActConfirm);
+    addHit(w * 2 / 3.0f, 0, (float)w, (float)h, -1, ActRight);
     float pw = 1100 * s, ph = 760 * s;
     float x0 = (w - pw) / 2, y0 = (h - ph) / 2;
     drawPanel(b, x0, y0, x0 + pw, y0 + ph, 1);
@@ -1601,6 +1654,9 @@ void App::drawLevelSelect(Batch& b, float cx, float y, float s) {
     std::snprintf(buf, sizeof buf, "<   %d   >", lv);
     float pulse = 0.5f + 0.5f * std::sin(time_ * 5);
     fontBody_.drawShadowed(b, buf, cx, y + 130 * s, 84 * s, rgba(1, 1, 1, 0.85f + 0.15f * pulse), Align::Center, 4 * s);
+    addHit(cx - 260 * s, y + 110 * s, cx - 70 * s, y + 240 * s, -1, ActLeft);
+    addHit(cx + 70 * s, y + 110 * s, cx + 260 * s, y + 240 * s, -1, ActRight);
+    addHit(cx - 70 * s, y + 110 * s, cx + 70 * s, y + 240 * s, -1, ActConfirm);
 
     // speed bars: one per level, height = speed
     float bw = 22 * s, gap = 6 * s, total = kMaxStartLevel * (bw + gap) - gap;
@@ -1629,11 +1685,14 @@ void App::drawLevelSelect(Batch& b, float cx, float y, float s) {
                                 : "Impossible - for machines only";
     Rgb hc = lv <= 11 ? th.accent : (lv <= 13 ? Rgb{1.0f, 0.6f, 0.15f} : Rgb{1.0f, 0.2f, 0.15f});
     fontBody_.drawShadowed(b, hint, cx, by + 120 * s, 30 * s, col(hc), Align::Center, 2 * s);
-    fontBody_.draw(b, "LEFT / RIGHT  change      ENTER  start      ESC  back", cx, by + 180 * s, 24 * s, rgba(1, 1, 1, 0.55f), Align::Center);
+    fontBody_.draw(b, in_.touchUi ? "tap  <  >  to change,  tap the number to start"
+                                  : "LEFT / RIGHT  change      ENTER  start      ESC  back",
+                   cx, by + 180 * s, 24 * s, rgba(1, 1, 1, 0.55f), Align::Center);
 }
 
 void App::drawMenus(Batch& b, int w, int h) {
     float s = h / 1080.0f;
+    hits_.clear();
     const Theme& th = theme(theme_);
     switch (screen_) {
     case Screen::Title:
@@ -1658,7 +1717,7 @@ void App::drawMenus(Batch& b, int w, int h) {
             std::vector<std::string> items;
             std::snprintf(buf, sizeof buf, "MUSIC  < %d >", settings_.musicVol); items.push_back(buf);
             std::snprintf(buf, sizeof buf, "SOUND  < %d >", settings_.sfxVol); items.push_back(buf);
-            items.push_back(std::string("FULLSCREEN  ") + (plat_->fullscreen ? "ON" : "OFF"));
+            items.push_back(std::string("FULLSCREEN  ") + (plat_->fullscreen || !plat_->hasWindow ? "ON" : "OFF"));
             items.push_back(std::string("THEME  < ") + (settings_.themeMode < 0 ? "BY LEVEL" : theme(settings_.themeMode).name) + " >");
             items.push_back("BACK");
             drawMenuList(b, items, optSel_, cx, 470 * s, 40 * s, s);
@@ -1675,6 +1734,7 @@ void App::drawMenus(Batch& b, int w, int h) {
         fontTitle_.drawShadowed(b, "PAUSED", w * 0.5f, y0 + 40 * s, 72 * s, rgba(1, 1, 1), Align::Center, 10 * s);
         std::vector<std::string> items = {"RESUME", "RESTART", std::string("< ") + th.name + " >", "HOW TO PLAY", "MAIN MENU"};
         drawMenuList(b, items, pauseSel_, w * 0.5f, y0 + 190 * s, 40 * s, s);
+        hits_[hits_.size() - 3].act = ActRight; // theme entry: tap = next theme
         break;
     }
     case Screen::Help:
@@ -1700,8 +1760,9 @@ void App::drawMenus(Batch& b, int w, int h) {
             std::snprintf(buf, sizeof buf, "NEW RECORD  #%d", lastRank_ + 1);
             fontTitle_.drawShadowed(b, buf, w * 0.5f, y0 + 370 * s, 48 * s, col(th.accent, 0.7f + 0.3f * std::sin(time_ * 6)), Align::Center, 4 * s);
         }
+        addHit(0, 0, (float)w, (float)h, -1, ActConfirm);
         if (screenTime_ > 0.6f)
-            fontBody_.drawShadowed(b, "PRESS ENTER / (A)", w * 0.5f, y0 + ph - 80 * s, 30 * s, rgba(1, 1, 1, 0.6f + 0.4f * std::sin(time_ * 4)), Align::Center, 6 * s);
+            fontBody_.drawShadowed(b, in_.touchUi ? "TAP TO CONTINUE" : "PRESS ENTER / (A)", w * 0.5f, y0 + ph - 80 * s, 30 * s, rgba(1, 1, 1, 0.6f + 0.4f * std::sin(time_ * 4)), Align::Center, 6 * s);
         break;
     }
     case Screen::Playing:
