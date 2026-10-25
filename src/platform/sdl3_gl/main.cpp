@@ -190,6 +190,15 @@ int main(int argc, char** argv) {
         SDL_GetWindowSize(win, &ww, &wh);
         float pxScale = ww > 0 ? (float)pw / ww : 1.0f; // window coords -> pixels
         touch.setScreen(pw, ph);
+        {
+            SDL_Rect safe;
+            if (SDL_GetWindowSafeArea(win, &safe)) {
+                plat.safeLeft = (int)(safe.x * pxScale);
+                plat.safeTop = (int)(safe.y * pxScale);
+                plat.safeRight = (int)((ww - safe.x - safe.w) * pxScale);
+                plat.safeBottom = (int)((wh - safe.y - safe.h) * pxScale);
+            }
+        }
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             switch (ev.type) {

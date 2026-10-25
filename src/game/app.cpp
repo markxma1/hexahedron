@@ -1551,8 +1551,10 @@ void App::drawTouchButtons(Batch& b, int w, int h, float s) {
         fontTitle_.drawShadowed(b, label, cx, cy - 22 * s, 40 * s, rgba(1, 1, 1), Align::Center, 2 * s);
         addHit(cx - r * 1.4f, cy - r * 1.4f, cx + r * 1.4f, cy + r * 1.4f, -1, act);
     };
-    if (screen_ == Screen::Playing) button(w * 0.5f, 70 * s, "II", ActPause);
-    else if (screen_ != Screen::Title && screen_ != Screen::GameOver && screen_ != Screen::Paused) button(70 * s, 70 * s, "<", ActBack);
+    // keep clear of the notch / system gesture strip at the screen edges
+    float top = plat_->safeTop + 110 * s, left = plat_->safeLeft + 110 * s;
+    if (screen_ == Screen::Playing) button(w * 0.5f, top, "II", ActPause);
+    else if (screen_ != Screen::Title && screen_ != Screen::GameOver && screen_ != Screen::Paused) button(left, top, "<", ActBack);
 }
 
 void App::drawMenuList(Batch& b, const std::vector<std::string>& items, int sel, float cx, float y, float size, float s) {

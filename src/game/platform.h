@@ -115,6 +115,8 @@ struct Platform {
     bool requestFullscreenToggle = false;
     bool fullscreen = false;
     bool hasWindow = true;          // false on consoles/phones: always fullscreen, no toggle
+    // Screen edges the game should keep buttons away from (notch, system gestures), pixels.
+    int safeLeft = 0, safeTop = 0, safeRight = 0, safeBottom = 0;
 };
 
 } // namespace hx

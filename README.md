@@ -81,8 +81,8 @@ src/game/      Presentation, also portable: camera, animation, particles, HUD, m
                Talks to the hardware ONLY through src/game/platform.h.
 src/platform/  Backends. Only platform-specific code lives here:
   sdl3_gl/     PC (Linux/Windows): SDL3 + OpenGL 3.3, HDR + MSAA + bloom + tonemapping.
-  android/     planned: Gradle project + touch controls on top of sdl3_gl (GLES 3.0).
-  ps3/         planned: PSL1GHT backend (RSX, ioPad, audio).
+  android/     Gradle project; native code = sdl3_gl with GLES 3.0 + touch.
+  ps3/         PSL1GHT backend: RSX renderer (FP16 HDR + bloom), ioPad, audio port.
 ```
 
 `platform.h` is deliberately small:
@@ -95,28 +95,75 @@ src/platform/  Backends. Only platform-specific code lives here:
 
 All saves are text files, so nothing depends on byte order (the PS3 is big-endian).
 
-### Porting to PS3 (PSL1GHT)
-
-See `src/platform/ps3/README.md`. Select it with `-DHX_PLATFORM=ps3`. The backend provides:
-
-1. `Renderer` on RSX (libgcm/rsxutil or tiny3d): 2 shaders in Cg (lit cube, sprite).
-   Bloom is optional; without post FX a plain `beginOverlay` is enough.
-2. `Audio` via `audio`/`libaudio` (float samples into the ring buffer).
-3. `Files` in `/dev_hdd0/game/HEXAHEDRON/USRDIR/`.
-4. Input via `ioPad` (right stick → `lookRateX/Y`).
-5. Build with `-DHX_NO_THREADS`; backgrounds are then generated step by step without a thread.
-
-`src/core` and `src/game` stay unchanged.
-
-### Porting to Android
-
-See `src/platform/android/README.md`. SDL3 runs on Android. Build the existing backend with `-DHX_GLES` (GLES 3.0 shaders);
-only touch controls are missing (swipe = roll, tap = drop, two-finger drag = look).
-
 ### Godot as a frontend
 
 Wrap `src/core` in a GDExtension (a class around `hx::Game`). Godot handles graphics
 and sound; the rules stay identical.
+
+## Building for other platforms
+
+All platforms share `src/core` (rules) and `src/game` (presentation, menus, audio synth, host loop, touch gestures). Every `.cpp` there is picked up automatically by CMake and by the PS3 Makefile. Only `src/platform/<backend>` is platform specific.
+
+### Android (`src/platform/android`)
+
+The backend code is shared with PC (`src/platform/sdl3_gl`), using OpenGL ES 3.0 and touch controls.
+
+**Requirements:** JDK 17, Android SDK (platform `android-35`, build-tools `35.0.0`), NDK `27.3.13750724`, CMake `3.31.6`. SDL3 3.4.18 is fetched automatically by CMake.
+
+**Build:**
+```bash
+cd src/platform/android
+echo "sdk.dir=/path/to/android-sdk" > local.properties
+./gradlew assembleDebug
+```
+Output: `app/build/outputs/apk/debug/app-debug.apk` (arm64-v8a + x86_64). Install with:
+```bash
+adb install -r app-debug.apk
+```
+
+**Touch Controls:**
+- Swipe left/right: roll
+- Drag down: faster; Fast flick down: drop
+- Swipe up: drop / menu up
+- Tap: menus and on-screen buttons (pause top centre, back top left)
+- Two fingers: look around; Pinch: zoom; Two-finger tap: reset view
+- Android Back button: back / pause
+
+**PC Test:** `./build/hexahedron --gles`
+
+### PS3 (`src/platform/ps3`, PSL1GHT homebrew)
+
+**Requirements:** ps3dev toolchain with PSL1GHT (prebuilt nightly at github.com/ps3dev/ps3dev releases), NVIDIA Cg Toolkit 3.1 (`libCg.so` for shader compiler), and a PSL1GHT source checkout to build the patched shader compiler once.
+
+**Build:**
+```bash
+export PS3DEV=/path/to/ps3dev PSL1GHT=$PS3DEV
+export PATH=$PS3DEV/bin:$PS3DEV/ppu/bin:$PATH
+export LD_LIBRARY_PATH=/path/to/Cg/usr/lib64
+cd src/platform/ps3
+tools/build_cgcomp.sh /path/to/PSL1GHT-source    # once
+make          # hexahedron.self (run with ps3load or in RPCS3)
+make pkg      # hexahedron.pkg (install via Package Manager on custom firmware console)
+```
+
+**Details:**
+- Renders at 720p (fallbacks: 1080p/576p/480p) with FP16 HDR + bloom. Fonts are linked into the binary.
+- Saves (`settings.txt`, `scores.txt`) go next to the program (USRDIR when installed).
+
+**Controller:**
+- D-pad/left stick: roll
+- Cross: drop / confirm; Circle: back
+- Start: pause; Select: help
+- L1/R1: zoom; L2/R2: theme
+- Right stick: look; R3: reset view
+
+**Testing in RPCS3:** Place an optional `args.txt` next to the program with PC-style options (e.g., `--autoplay --play --mute`).
+
+**Known PSL1GHT Pitfalls Handled:**
+- Prebuilt `librsx` breaks on command-buffer segment switches inside calls; renderer switches segments itself first.
+- `cgcomp`'s `-fastprecision` mixes half/full registers; patched `cgcomp` removes this.
+- `float4 TEXCOORD` loses `w` under perspective; vertex color uses `COLOR0`.
+- Fragment program constants are patched into a per-draw CPU copy.
 
 ## Tests / tools
 
