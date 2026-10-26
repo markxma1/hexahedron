@@ -17,9 +17,9 @@ static uint32_t nextCodepoint(const std::string& s, size_t& i) {
     return '?';
 }
 
-bool Font::load(Renderer* r, const std::vector<uint8_t>& ttf, float bakePx) {
+bool Font::bake(const std::vector<uint8_t>& ttf, float bakePx) {
     bakePx_ = bakePx;
-    const int W = 2048, H = 2048;
+    const int W = kAtlas, H = kAtlas;
     std::vector<uint8_t> alpha(W * H, 0);
     stbtt_pack_context pc;
     if (!stbtt_PackBegin(&pc, alpha.data(), W, H, 0, 2, nullptr)) return false;
@@ -46,13 +46,20 @@ bool Font::load(Renderer* r, const std::vector<uint8_t>& ttf, float bakePx) {
         g.u0 = q.s0; g.v0 = q.t0; g.u1 = q.s1; g.v1 = q.t1;
         g.adv = pcs[i].xadvance;
     }
-    std::vector<uint8_t> rgba(W * H * 4);
+    rgba_.resize((size_t)W * H * 4);
     for (int i = 0; i < W * H; ++i) {
-        rgba[i * 4 + 0] = rgba[i * 4 + 1] = rgba[i * 4 + 2] = 255;
-        rgba[i * 4 + 3] = alpha[i];
+        rgba_[i * 4 + 0] = rgba_[i * 4 + 1] = rgba_[i * 4 + 2] = 255;
+        rgba_[i * 4 + 3] = alpha[i];
     }
-    tex_ = r->createTexture(W, H, rgba.data(), true, false);
     return true;
+}
+
+bool Font::upload(Renderer* r) {
+    if (rgba_.empty()) return false;
+    tex_ = r->createTexture(kAtlas, kAtlas, rgba_.data(), true, false);
+    rgba_.clear();
+    rgba_.shrink_to_fit();
+    return tex_ != 0;
 }
 
 const Font::Glyph* Font::glyph(uint32_t cp) const {

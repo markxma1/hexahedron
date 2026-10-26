@@ -41,13 +41,19 @@ void Game::emit(Ev t, uint32_t uid, int c, int r, int v, int n, int64_t p, int x
 
 // Speed curves, Tetris style: level 1 is slow enough to learn the rolling,
 // every level is noticeably faster and brings more rising dice.
+// Gentle start: level 1 runs at half speed, normal speed from level 5 on.
+static float earlySlowdown(int level) {
+    return level >= 5 ? 1.0f : 1.0f + 0.25f * (float)(5 - level); // 2.0, 1.75, 1.5, 1.25
+}
+
 float Game::fallInterval() const {
-    float t = 1.15f * std::pow(0.85f, (float)(level_ - 1));
+    float t = 1.15f * std::pow(0.85f, (float)(level_ - 1)) * earlySlowdown(level_);
     return t < 0.07f ? 0.07f : t;
 }
 float Game::riseInterval() const {
     float t = 16.0f - 1.2f * (float)(level_ - 1);
-    return t < 2.5f ? 2.5f : t;
+    t = t < 2.5f ? 2.5f : t;
+    return t * earlySlowdown(level_);
 }
 int Game::riseCount() const {
     int n = 1 + (level_ - 1) / 5;   // L1-5: 1, L6-10: 2, L11+: 3

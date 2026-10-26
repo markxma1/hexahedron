@@ -184,6 +184,8 @@ private:
 
     void pumpAudio();
     void uploadBackgrounds();
+    bool finishLoading();
+    void renderLoading();
 
     Platform* plat_ = nullptr;
     Renderer* gfx_ = nullptr;
@@ -204,6 +206,16 @@ private:
     std::atomic<bool> bgStop_{false};
     float bgFadeIn_[kThemeCount] = {};
     Worker bgWorker_;
+
+    // loading (worker fills these, main thread uploads them)
+    static const int kLoadSteps = 5;
+    std::atomic<int> loadStep_{0};
+    bool loaded_ = false;
+    TexId loadDotTex_ = 0;
+    std::vector<uint8_t> ttfTitle_, ttfBody_;
+    Image loadDice_, loadSprite_, loadGrid_;
+    std::vector<MeshVertex> loadMeshV_;
+    std::vector<uint16_t> loadMeshI_;
 
     // input
     bool prevHeld_[ActCount] = {};

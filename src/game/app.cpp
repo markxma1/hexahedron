@@ -93,39 +93,56 @@ bool App::init(Platform* p, const LaunchOptions& opt) {
     gfx_ = p->renderer;
     opt_ = opt;
 
-    std::vector<uint8_t> ttf;
-    if (!p->files->readAsset("fonts/Orbitron.ttf", ttf) || !fontTitle_.load(gfx_, ttf, 96)) {
+    if (!p->files->readAsset("fonts/Orbitron.ttf", ttfTitle_)) {
         logMsg("hexahedron: cannot load fonts/Orbitron.ttf");
         return false;
     }
-    if (!p->files->readAsset("fonts/Exo2.ttf", ttf) || !fontBody_.load(gfx_, ttf, 72)) {
+    if (!p->files->readAsset("fonts/Exo2.ttf", ttfBody_)) {
         logMsg("hexahedron: cannot load fonts/Exo2.ttf");
         return false;
     }
 
-    Image dice = makeDiceAtlas(256);
-    diceTex_ = gfx_->createTexture(dice.w, dice.h, dice.px.data(), true, false);
-    Image spr = makeSpriteAtlas();
-    spriteTex_ = gfx_->createTexture(spr.w, spr.h, spr.px.data(), true, false);
-    Image grid = makeGridCell(128);
-    gridTex_ = gfx_->createTexture(grid.w, grid.h, grid.px.data(), true, true);
-
-    std::vector<MeshVertex> mv;
-    std::vector<uint16_t> mi;
-    buildRoundedCube(0.14f, 5, mv, mi);
-    diceMesh_ = gfx_->createMesh(mv.data(), (int)mv.size(), mi.data(), (int)mi.size());
+    // Tiny soft dot for the loading screen (cheap, so it is ready at once).
+    {
+        const int n = 32;
+        Image dot;
+        dot.init(n, n);
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x) {
+                float dx = (x + 0.5f) / n * 2 - 1, dy = (y + 0.5f) / n * 2 - 1;
+                float a = clampf(1 - std::sqrt(dx * dx + dy * dy), 0, 1);
+                uint8_t* px = dot.at(x, y);
+                px[0] = px[1] = px[2] = 255;
+                px[3] = (uint8_t)(a * a * 255);
+            }
+        loadDotTex_ = gfx_->createTexture(n, n, dot.px.data(), false, false);
+    }
 
     loadSettings();
     loadScores();
     if (opt.theme >= 0) settings_.themeMode = opt.theme % kThemeCount;
     theme_ = prevTheme_ = settings_.themeMode >= 0 ? settings_.themeMode : 0;
 
-    // Backgrounds are slow to generate (seconds on PS3): build them on the
-    // worker, current theme first, and fade each one in when it is ready.
+    synth_.init(p->audio ? p->audio->sampleRate() : 48000);
+    synth_.setTheme(theme_);
+    applyVolumes();
+    if (settings_.fullscreen != p->fullscreen) p->requestFullscreenToggle = true;
+
+    // The slow CPU work (fonts, atlases, backgrounds: seconds on PS3) runs on
+    // the worker while the main thread shows the loading screen.
+    // Backgrounds come last, current theme first; each fades in when ready.
     bgImages_.resize(kThemeCount);
     for (int i = 0; i < kThemeCount; ++i) bgReady_[i] = 0;
+    loadStep_ = 0;
     int first = theme_;
-    auto build = [this, first]() {
+    auto job = [this, first]() {
+        fontTitle_.bake(ttfTitle_, 96);   ++loadStep_;
+        fontBody_.bake(ttfBody_, 72);     ++loadStep_;
+        loadDice_ = makeDiceAtlas(256);   ++loadStep_;
+        loadSprite_ = makeSpriteAtlas();  ++loadStep_;
+        loadGrid_ = makeGridCell(128);
+        buildRoundedCube(0.14f, 5, loadMeshV_, loadMeshI_);
+        ++loadStep_;
         for (int k = 0; k < kThemeCount && !bgStop_; ++k) {
             int i = (first + k) % kThemeCount;
             Image im = makeBackground(i, kBgW, kBgH, &bgStop_);
@@ -134,21 +151,77 @@ bool App::init(Platform* p, const LaunchOptions& opt) {
             bgReady_[i] = 1;
         }
     };
-    if (!bgWorker_.start(build)) build(); // no thread: build them all now
+    if (!bgWorker_.start(job)) job(); // no thread: do it all now
+    return true;
+}
 
-    synth_.init(p->audio ? p->audio->sampleRate() : 48000);
-    synth_.setTheme(theme_);
-    applyVolumes();
-    if (settings_.fullscreen != p->fullscreen) p->requestFullscreenToggle = true;
+// Called every frame until the worker has finished the base assets.
+bool App::finishLoading() {
+    if (loaded_) return true;
+    if (loadStep_ < kLoadSteps) return false;
+    if (!fontTitle_.upload(gfx_) || !fontBody_.upload(gfx_)) {
+        logMsg("hexahedron: cannot bake fonts");
+        quit_ = true;
+        return false;
+    }
+    diceTex_ = gfx_->createTexture(loadDice_.w, loadDice_.h, loadDice_.px.data(), true, false);
+    spriteTex_ = gfx_->createTexture(loadSprite_.w, loadSprite_.h, loadSprite_.px.data(), true, false);
+    gridTex_ = gfx_->createTexture(loadGrid_.w, loadGrid_.h, loadGrid_.px.data(), true, true);
+    diceMesh_ = gfx_->createMesh(loadMeshV_.data(), (int)loadMeshV_.size(), loadMeshI_.data(), (int)loadMeshI_.size());
+    loadDice_ = loadSprite_ = loadGrid_ = Image();
+    loadMeshV_ = {};
+    loadMeshI_ = {};
+    ttfTitle_ = {};
+    ttfBody_ = {};
 
-    if (opt.autoplay || opt.skipTitle) {
-        startGame(opt.mode, false);
+    if (opt_.autoplay || opt_.skipTitle) {
+        startGame(opt_.mode, false);
         screen_ = Screen::Playing;
     } else {
         startGame(Mode::Standard, true);
         screen_ = Screen::Title;
     }
+    screenTime_ = 0;
+    loaded_ = true;
     return true;
+}
+
+// Six dots circling like the corners of a hexagon, plus a progress bar.
+void App::renderLoading() {
+    int w = 0, h = 0;
+    gfx_->viewportSize(w, h);
+    if (w <= 0 || h <= 0) return;
+    FrameParams fp;
+    Mat4 id = Mat4::identity();
+    std::copy(id.m, id.m + 16, fp.view);
+    std::copy(id.m, id.m + 16, fp.proj);
+    fp.camPos[0] = fp.camPos[1] = fp.camPos[2] = 0;
+    fp.lightDir[0] = 0; fp.lightDir[1] = 1; fp.lightDir[2] = 0;
+    for (int k = 0; k < 3; ++k) {
+        fp.lightColor[k] = 1; fp.skyColor[k] = fp.groundColor[k] = 0.2f;
+    }
+    fp.clearColor[0] = 0.01f; fp.clearColor[1] = 0.012f; fp.clearColor[2] = 0.04f;
+    gfx_->beginFrame(fp);
+    gfx_->beginOverlay();
+
+    Batch b(gfx_);
+    b.begin(loadDotTex_, Blend::Additive, false);
+    float cx = w * 0.5f, cy = h * 0.47f, r = h * 0.06f, s = h / 1080.0f;
+    for (int k = 0; k < 6; ++k) {
+        float a = k * (kPi / 3) + time_ * 0.8f;
+        float x = cx + std::cos(a) * r, y = cy + std::sin(a) * r;
+        // brightness chases around the ring
+        float ph = std::fmod(time_ * 1.6f - k / 6.0f + 10.0f, 1.0f);
+        float bright = 0.25f + 0.75f * std::pow(1 - ph, 3.0f);
+        float d = (14 + 10 * bright) * s;
+        b.rect(x - d, y - d, x + d, y + d, 0, 0, 1, 1, rgba(0.35f, 0.75f, 1.0f, bright));
+    }
+    float bw = w * 0.22f, bh = 4 * s, by = cy + r + 60 * s;
+    float prog = clampf((float)loadStep_ / kLoadSteps, 0, 1);
+    b.rect(cx - bw / 2, by, cx + bw / 2, by + bh, 0.5f, 0.5f, 0.5f, 0.5f, rgba(0.3f, 0.5f, 0.8f, 0.25f));
+    b.rect(cx - bw / 2, by, cx - bw / 2 + bw * prog, by + bh, 0.5f, 0.5f, 0.5f, 0.5f, rgba(0.4f, 0.8f, 1.0f, 0.9f));
+    b.flush();
+    gfx_->endFrame();
 }
 
 void App::uploadBackgrounds() {
@@ -271,6 +344,11 @@ void App::setTheme(int t) {
 void App::frame(float dt, const InputState& in) {
     if (dt > 0.1f) dt = 0.1f;
     time_ += dt;
+    if (!finishLoading()) {
+        renderLoading();
+        pumpAudio();
+        return;
+    }
     frameDt_ = dt;
     screenTime_ += dt;
     in_ = in;

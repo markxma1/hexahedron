@@ -10,7 +10,10 @@ enum class Align { Left, Center, Right };
 
 class Font {
 public:
-    bool load(Renderer* r, const std::vector<uint8_t>& ttf, float bakePx);
+    bool load(Renderer* r, const std::vector<uint8_t>& ttf, float bakePx) { return bake(ttf, bakePx) && upload(r); }
+    // Split for loading on a worker: bake() is CPU only, upload() needs the renderer.
+    bool bake(const std::vector<uint8_t>& ttf, float bakePx);
+    bool upload(Renderer* r);
     // size = cap-height-ish pixel size (the baked em size scaled).
     float width(const std::string& utf8, float size) const;
     // y is the top of the text line.
@@ -23,9 +26,11 @@ public:
     TexId texture() const { return tex_; }
 
 private:
+    static const int kAtlas = 2048;
     struct Glyph { float x0, y0, x1, y1, u0, v0, u1, v1, adv; };
     std::vector<Glyph> glyphs_; // codepoints 32..255
     TexId tex_ = 0;
+    std::vector<uint8_t> rgba_; // baked atlas until upload()
     float bakePx_ = 64, ascent_ = 0, descent_ = 0;
     const Glyph* glyph(uint32_t cp) const;
 };
