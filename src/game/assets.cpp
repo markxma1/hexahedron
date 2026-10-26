@@ -322,11 +322,12 @@ static void planet(Image& im, float cx, float cy, float rad, Rgb c1, Rgb c2, Rgb
         }
 }
 
-Image makeBackground(int theme, int W, int H) {
+Image makeBackground(int theme, int W, int H, const std::atomic<bool>* cancel) {
     Image im;
     im.init(W, H);
     const float asp = (float)W / H;
-    for (int y = 0; y < H; ++y)
+    for (int y = 0; y < H; ++y) {
+        if (cancel && *cancel) return im;
         for (int x = 0; x < W; ++x) {
             float u = (float)x / W, v = (float)y / H;
             float px = u * asp, py = v;
@@ -424,6 +425,8 @@ Image makeBackground(int theme, int W, int H) {
             }
             put(im, x, y, c.r, c.g, c.b, 1);
         }
+    }
+    if (cancel && *cancel) return im;
     if (theme == 0) {
         stars(im, 5, 900, 0.9f);
         planet(im, W * 0.83f, H * 1.08f, H * 0.42f, Rgb{0.55f, 0.25f, 0.55f}, Rgb{0.95f, 0.70f, 0.80f}, Rgb{1.0f, 0.5f, 0.8f}, 15);

@@ -10,14 +10,12 @@
 #include "platform.h"
 #include "synth.h"
 #include "themes.h"
+#include "worker.h"
 #include <atomic>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#ifndef HX_NO_THREADS
-#include <thread>
-#endif
 
 namespace hx {
 
@@ -200,12 +198,12 @@ private:
     Synth synth_;
     std::vector<float> audioBuf_;
 
-    // background generation (worker thread)
+    // background generation (worker thread): 0 missing, 1 image ready, 2 uploaded
     std::vector<Image> bgImages_;
     std::atomic<int> bgReady_[kThemeCount];
-#ifndef HX_NO_THREADS
-    std::thread bgThread_;
-#endif
+    std::atomic<bool> bgStop_{false};
+    float bgFadeIn_[kThemeCount] = {};
+    Worker bgWorker_;
 
     // input
     bool prevHeld_[ActCount] = {};

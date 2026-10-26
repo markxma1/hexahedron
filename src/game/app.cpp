@@ -84,9 +84,8 @@ const int kHelpCount = (int)(sizeof(kHelp) / sizeof(kHelp[0]));
 // ====================================================================== setup
 
 App::~App() {
-#ifndef HX_NO_THREADS
-    if (bgThread_.joinable()) bgThread_.join();
-#endif
+    bgStop_ = true;
+    bgWorker_.join();
 }
 
 bool App::init(Platform* p, const LaunchOptions& opt) {
@@ -121,22 +120,21 @@ bool App::init(Platform* p, const LaunchOptions& opt) {
     if (opt.theme >= 0) settings_.themeMode = opt.theme % kThemeCount;
     theme_ = prevTheme_ = settings_.themeMode >= 0 ? settings_.themeMode : 0;
 
-    // First background now, the rest in the background.
+    // Backgrounds are slow to generate (seconds on PS3): build them on the
+    // worker, current theme first, and fade each one in when it is ready.
     bgImages_.resize(kThemeCount);
     for (int i = 0; i < kThemeCount; ++i) bgReady_[i] = 0;
-    bgImages_[theme_] = makeBackground(theme_, kBgW, kBgH);
-    bgReady_[theme_] = 1;
-    uploadBackgrounds();
-#ifndef HX_NO_THREADS
     int first = theme_;
-    bgThread_ = std::thread([this, first]() {
-        for (int i = 0; i < kThemeCount; ++i) {
-            if (i == first) continue;
-            bgImages_[i] = makeBackground(i, kBgW, kBgH);
+    auto build = [this, first]() {
+        for (int k = 0; k < kThemeCount && !bgStop_; ++k) {
+            int i = (first + k) % kThemeCount;
+            Image im = makeBackground(i, kBgW, kBgH, &bgStop_);
+            if (bgStop_) break;
+            bgImages_[i] = std::move(im);
             bgReady_[i] = 1;
         }
-    });
-#endif
+    };
+    if (!bgWorker_.start(build)) build(); // no thread: build them all now
 
     synth_.init(p->audio ? p->audio->sampleRate() : 48000);
     synth_.setTheme(theme_);
@@ -163,11 +161,6 @@ void App::uploadBackgrounds() {
             bgReady_[i] = 2;
         }
     }
-#ifdef HX_NO_THREADS
-    // No threads: generate one missing background per call.
-    for (int i = 0; i < kThemeCount; ++i)
-        if (bgReady_[i] == 0) { bgImages_[i] = makeBackground(i, kBgW, kBgH); bgReady_[i] = 1; break; }
-#endif
 }
 
 void App::applyVolumes() {
@@ -298,6 +291,8 @@ void App::frame(float dt, const InputState& in) {
     uploadBackgrounds();
     if (pendingTheme_ >= 0) { setTheme(pendingTheme_); pendingTheme_ = -1; }
     themeFade_ = std::min(1.0f, themeFade_ + dt * 0.8f);
+    for (int i = 0; i < kThemeCount; ++i)
+        if (bgTex_[i]) bgFadeIn_[i] = std::min(1.0f, bgFadeIn_[i] + dt * 1.5f);
 
     // Global zoom (original: L/R triggers).
     if (in.held[ActZoomIn]) zoom_ = std::max(0.6f, zoom_ - dt * 0.6f);
@@ -1084,6 +1079,7 @@ void App::drawBackground(Batch& b, int w, int h) {
         if (alpha <= 0.001f) return;
         TexId tex = bgTex_[t] ? bgTex_[t] : bgTex_[theme_];
         if (!tex) return;
+        alpha *= bgFadeIn_[bgTex_[t] ? t : theme_];
         const Theme& th = theme(t);
         // cover-fit with a slow drift
         float sa = (float)w / h, ta = (float)kBgW / kBgH;

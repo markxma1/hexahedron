@@ -2,6 +2,7 @@
 #pragma once
 #include "platform.h"
 #include <cstdint>
+#include <atomic>
 #include <vector>
 
 namespace hx {
@@ -40,6 +41,7 @@ void spriteUV(int sprite, float& u0, float& v0, float& u1, float& v1);
 Image makeGridCell(int size);
 
 // Theme backgrounds.
-Image makeBackground(int theme, int w, int h);
+// cancel: checked per row; when it turns true the image is left unfinished.
+Image makeBackground(int theme, int w, int h, const std::atomic<bool>* cancel = nullptr);
 
 } // namespace hx
