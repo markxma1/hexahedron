@@ -10,7 +10,23 @@ nothing from the original game is included. It is not affiliated with or endorse
 
 Made by Xma1, 2026, developed with the help of AI (Claude by Anthropic).
 
+## Download
+
+Ready-made builds for every platform are on the
+[releases page](https://github.com/markxma1/hexahedron/releases):
+
+| File | Platform | How to start |
+|---|---|---|
+| `hexahedron_<version>_amd64.deb` | Ubuntu / Debian (22.04 or newer) | double-click to install, then HEXAHEDRON in the app menu |
+| `HEXAHEDRON-linux-x86_64.tar.gz` | any Linux (glibc 2.35+) | unpack, run `HEXAHEDRON/hexahedron` |
+| `HEXAHEDRON-windows-x64.zip` | Windows 10/11 | unpack, run `hexahedron.exe` |
+| `HEXAHEDRON-macos-universal.zip` | macOS 11+ (Apple Silicon and Intel) | unpack; first start: right-click → Open (not signed) |
+| `HEXAHEDRON-android.apk` | Android 7+ | open the file on the phone, allow installing from this source |
+| `HEXAHEDRON-ps3.pkg` | PS3 with custom firmware | copy to `/dev_hdd0/packages/`, install with Package Manager |
+
 ## Playing
+
+Build and run from source on PC (Linux, Windows with MSYS2, macOS) with SDL3 installed:
 
 ```
 cmake -S . -B build -G Ninja && cmake --build build
@@ -51,14 +67,16 @@ Command line: `--play` (skip the title), `--mode standard|advanced|quick`,
 
 ### Speed and levels (Tetris style)
 
-Before each game you pick a **start level (1–15)**. Level 1 is slow so you can get
-used to how the dice roll. Every 25 cleared dice the level goes up.
+Before each game you pick a **start level (1–15)**. The first levels are extra gentle
+so you can get used to how the dice roll: level 1 runs at half speed, levels 2–4 get
+a little faster each, and from level 5 on the normal curve applies.
+Every 25 cleared dice the level goes up.
 Labels: 1–2 Relaxed, 3–5 Normal, 6–8 Fast, 9–11 Expert, 12–13 Speedster, 14–15 Impossible.
 
 | | Level 1 | Level 5 | Level 10 | Level 15 |
 |---|---|---|---|---|
-| Fall speed (s per cell) | 1.15 | 0.60 | 0.27 | 0.12 |
-| Random dice | 1 every 16 s | 1 every 11 s | 2 every 5 s | 3 every 2.5 s |
+| Fall speed (s per cell) | 2.30 | 0.60 | 0.27 | 0.12 |
+| Random dice | 1 every 32 s | 1 every 11 s | 2 every 5 s | 3 every 2.5 s |
 | Blue → red | 4.0 s | 3.4 s | 2.65 s | 1.9 s |
 
 ## Visual helpers
@@ -80,7 +98,7 @@ src/game/      Presentation, also portable: camera, animation, particles, HUD, m
                synthesizer for music and sound effects.
                Talks to the hardware ONLY through src/game/platform.h.
 src/platform/  Backends. Only platform-specific code lives here:
-  sdl3_gl/     PC (Linux/Windows): SDL3 + OpenGL 3.3, HDR + MSAA + bloom + tonemapping.
+  sdl3_gl/     PC (Linux/Windows/macOS): SDL3 + OpenGL 3.3, HDR + MSAA + bloom + tonemapping.
   android/     Gradle project; native code = sdl3_gl with GLES 3.0 + touch.
   ps3/         PSL1GHT backend: RSX renderer (FP16 HDR + bloom), ioPad, audio port.
 ```
@@ -93,6 +111,11 @@ src/platform/  Backends. Only platform-specific code lives here:
 * **Files**: read assets, save small text files (settings, high scores).
 * **Input**: held buttons as abstract actions, plus optional camera look / zoom values.
 
+Besides `platform.h` there is one more tiny interface, `src/game/worker.h`: a single
+background thread (std::thread by default, a native PPU thread on PS3). Fonts, textures
+and the procedural backgrounds are built on it while the main thread shows a loading
+screen, so the game never looks frozen on slow CPUs.
+
 All saves are text files, so nothing depends on byte order (the PS3 is big-endian).
 
 ### Godot as a frontend
@@ -101,6 +124,22 @@ Wrap `src/core` in a GDExtension (a class around `hx::Game`). Godot handles grap
 and sound; the rules stay identical.
 
 ## Building for other platforms
+
+### Releases (GitHub Actions)
+
+`.github/workflows/release.yml` builds every platform on GitHub's machines. Push a
+version tag and the files appear as a release a few minutes later:
+
+```
+git tag v0.2 && git push origin v0.2
+```
+
+Linux is built on Ubuntu 22.04 with SDL3 linked statically (plus a `.deb` from
+`.github/scripts/make_deb.sh`), Windows with MSYS2/MinGW (static, no console window),
+macOS as a universal binary. The PC builds use `.github/scripts/build_pc.sh`, which
+also works locally. Started by hand from the Actions tab, the files stay as run artifacts.
+
+### Shared code
 
 All platforms share `src/core` (rules) and `src/game` (presentation, menus, audio synth, host loop, touch gestures). Every `.cpp` there is picked up automatically by CMake and by the PS3 Makefile. Only `src/platform/<backend>` is platform specific.
 
@@ -169,10 +208,12 @@ make pkg      # hexahedron.pkg (install via Package Manager on custom firmware c
 
 * `build/core_tests`: rule tests (rolling, combos, blue → red, wipe, drop combos,
   multiplier reset, game over, speed levels, multi-column rising)
+* `build/touch_tests`: touch gesture tests (swipe steps, flick drop, two-finger look/zoom/tap)
 * `build/asset_preview <dir>`: all procedural textures as images
 * `build/audio_preview <dir>`: music of every theme + sound effects as WAV
 * `hexahedron --autoplay --screenshot out.ppm 600`: screenshot after 600 frames;
-  `--press FRAME ACTION` scripts key presses
+  `--press FRAME ACTION` scripts key presses, `--tap FRAME X Y` scripted taps,
+  `--touch-ui` shows the touch buttons, `--gles` uses the OpenGL ES path like Android
   (`HX_SAVE_DIR=/tmp/x` keeps the real save files clean)
 
 ## How this was made
