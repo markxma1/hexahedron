@@ -79,7 +79,9 @@ $(OUTPUT).self: $(OUTPUT).elf
 $(OUTPUT).elf: $(OFILES)
 
 # generated headers (shaders, fonts) must exist before the C++ files compile
-$(CPPFILES:.cpp=.o): $(addsuffix .o,$(VPOFILES)) $(addsuffix .o,$(FPOFILES)) $(addsuffix .o,$(TTFFILES))
+# (only OFILES is exported into this sub-make, so split it here)
+GENOFILES := $(filter %.vpo.o %.fpo.o %.ttf.o,$(OFILES))
+$(filter-out $(GENOFILES),$(OFILES)): $(GENOFILES)
 
 %.vpo.o: %.vpo
 	@echo $(notdir $<)
