@@ -15,3 +15,7 @@ src/platform/android/build/
 src/platform/android/app/build/
 src/platform/android/app/.cxx/
 src/platform/android/local.properties
+
+# CI build folders
+_ci/
+dist/

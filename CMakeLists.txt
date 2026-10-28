@@ -66,6 +66,9 @@ if(SDL3_FOUND)
   target_compile_definitions(hexahedron PRIVATE HX_SOURCE_ASSETS="${CMAKE_SOURCE_DIR}/assets")
   find_package(OpenGL REQUIRED)
   target_link_libraries(hexahedron OpenGL::GL)
+  if(WIN32)
+    set_target_properties(hexahedron PROPERTIES WIN32_EXECUTABLE TRUE) # no console window
+  endif()
   add_custom_command(TARGET hexahedron POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:hexahedron>/assets)
 else()
